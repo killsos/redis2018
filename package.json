@@ -1,0 +1,22 @@
+{
+  "name": "redis2018",
+  "version": "1.0.0",
+  "description": "redis2018",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/killsos/redis2018.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/killsos/redis2018/issues"
+  },
+  "homepage": "https://github.com/killsos/redis2018#readme",
+  "dependencies": {
+    "redis": "^2.8.0"
+  }
+}
