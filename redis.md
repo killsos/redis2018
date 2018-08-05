@@ -11,9 +11,7 @@
 	
 	它通常被称为数据结构服务器，
 	
-	因为值（value）可以是 字符串(String), 哈希(Map), 列表(list), 
-	
-	集合(sets) 和 有序集合(sorted sets)等类型。
+	因为值（value）可以是 字符串(String), 哈希(Hash), 列表(list), 集合(sets) 和 有序集合(sorted sets)等5种类型
 	
 	
 
@@ -146,9 +144,11 @@
 		
 		redis在redis.conf配置文件默认开启16个databases数据库
 		
-		默认是使用0号服务器
+		默认是使用0号数据库
 		
-		select n; 选择n号服务器
+		select n; 选择n号数据库
+		
+		flushdb  // 清除当前数据库的数据
 		
 		move keyName n; // 将key移动n号服务器上
 		
@@ -330,7 +330,7 @@
 		
 
 
-- link链表命令
+- link List 链表命令
 
 		
 		lpush key value 
@@ -478,7 +478,7 @@
 
 		
 		zadd key score1 value1 score2 value2 ..
-		添加元素
+		添加元素  // score是排序的依据
 		
 			redis 127.0.0.1:6379> zadd stu 18 lily 19 hmm 20 lilei 21 lilei
 			(integer) 3
@@ -511,7 +511,7 @@
 		zrevrank key memeber
 		查询 member的排名(降续 0名开始)
 		
-		ZRANGE key start stop [WITHSCORES]
+		zrange key start stop [WITHSCORES]
 		把集合排序后,返回名次[start,stop]的元素
 		默认是升续排列 
 		Withscores 是把score也打印出来
@@ -593,4 +593,671 @@
 		作用: 返回key中所有的value
 		
 		
+
+
+#### Redis 中的事务
+
+- Redis支持简单的事务
+
+- Redis与 mysql事务的对比
+
 		
+		 项目                         Mysql                         Redis         
+		 
+		 开启                         start transaction             muitl
+		 
+		 语句                         普通sql(建表语句会中止当前事务)   普通命令
+		 
+		 失败                         rollback 回滚                  discard 取消
+		 
+		 成功                         commit                         exec
+		 
+		 
+		 注: rollback与discard 的区别
+		 如果已经成功执行了2条语句, 第3条语句出错.
+		 Rollback后,前2条的语句影响消失.
+		 Discard只是结束本次事务,前2条语句造成的影响仍然还在
+		 
+		 在开启multi后 执行的命令都会放到队列里 当执行exec命令后统一执行
+		 
+		 注:
+		 在mutil后面的语句中, 语句出错可能有2种情况
+		 1: 语法就有问题, 
+		 这种,exec时,报错, 所有语句得不到执行
+		 
+		 2: 语法本身没错,但适用对象有问题. 比如 zadd 操作list对象
+		 Exec之后,会执行正确的语句,并跳过有不适当的语句.
+		 
+		 (如果zadd操作list这种事怎么避免? 这一点,由程序员负责)
+		 
+		 
+		 
+		事务中有  ---  watch命令 来监控某个值得变化 如果值发生变化就取消事务
+		
+		watch key1 key2  ... keyN
+		作用:监听key1 key2..keyN有没有变化,如果有变, 则事务取消
+		
+		unwatch 
+		作用: 取消所有watch监听
+		
+		
+		
+		 例: 
+		 redis 127.0.0.1:6379> watch ticket
+		 OK
+		 redis 127.0.0.1:6379> multi
+		 OK
+		 redis 127.0.0.1:6379> decr ticket
+		 QUEUED
+		 redis 127.0.0.1:6379> decrby money 100
+		 QUEUED
+		 redis 127.0.0.1:6379> exec
+		 (nil)   // 返回nil,说明监视的ticket已经改变了,事务就取消了.
+		 redis 127.0.0.1:6379> get ticket
+		 "0"
+		 redis 127.0.0.1:6379> get money
+		 "200"
+		 
+		 
+		                        
+	
+	
+- 消息订阅
+
+		
+		使用办法:
+		
+			订阅端: subscribe 频道名称
+			
+			发布端: publish 频道名称 发布内容
+			
+			psubscribe new*   订阅以new为开头的频道
+			
+			unsubscribe  解除订阅
+			
+			psubscribe   pattern 解除订阅
+			
+			pubsub 管理当前的订阅频道
+		
+		客户端例子:
+		redis 127.0.0.1:6379> subscribe news
+		Reading messages... (press Ctrl-C to quit)
+		1) "subscribe"
+		2) "news"
+		3) (integer) 1
+		1) "message"
+		2) "news"
+		3) "good good study"
+		1) "message"
+		2) "news"
+		3) "day day up"
+		
+		服务端例子:
+		redis 127.0.0.1:6379> publish news 'good good study'
+		(integer) 1
+		redis 127.0.0.1:6379> publish news 'day day up'
+		(integer) 1
+		
+		
+		
+	
+## Redis持久化
+
+		
+		持久化: 即把数据存储于断电后不会丢失的设备中 通常是硬盘
+		
+		常见的持久化方式: 
+			
+			主从: 通过从服务器保存和持久化 如mongodb的replication sets配置
+			
+			日志: 操作生成相关日志 并通过日志来恢复数据
+			
+				counchDB对于数据内容 不修改 只追加 则文件本身就是日志 不会丢失数据
+				
+		
+	
+	
+
+1. redis - rdb快照持久化
+
+		
+		工作原理:
+			
+			每隔N分钟 或 N写操作后
+			
+			从内存dump数据形成rdb文件
+			
+			压缩
+			
+			放在 备份目录
+		
+		在redis.conf进行配置
+		
+			save 选项 进行配置
+			
+			save 秒数 数据修改次数
+			
+				save 900 1     # 刷新快照到硬盘中，必须满足两者要求才会触发 即900秒之后至少1个关键字发生变化
+				save 300 10    # 必须是300秒之后至少10个关键字发生变化。
+				save 60 10000  # 必须是60秒之后至少10000个关键字发生变化
+			
+			(这3个选项都屏蔽,则rdb禁用)
+			
+				
+		redis-server
+			
+			老版本是这个进程不仅负责监听客户端的请求 同时还要负责导出RDB
+			
+			新版本是redis-server进程生成一个子进程(称为:rdbdump进程) 专门负责导出RDB 如果这个子进程导出RDB出错了 例如硬盘空间慢等原因
+			
+			这时候redis最好停止写入数据 不然导致 数据不一致 问题就严重了
+			
+			所以设置 
+			
+			stop-writes-on-bgsave-error yes    # 后台存储错误停止写
+		
+		
+		rdbcompression yes     # 使用LZF压缩rdb文件
+		
+		rdbchecksum yes        # 存储和加载rdb文件时校验
+		
+		dbfilename dump.rdb    # 设置rdb文件名
+		
+		dir ./                 #  设置工作目录，rdb文件会写入该目录
+		
+		
+		rdb的缺陷:
+			
+			在2个保存点之间,断电,
+			
+			将会丢失1-N分钟的数据
+			
+			出于对持久化的更精细要求,redis增添了aof方式 append only file
+			
+		优势: 因为是一整个二进制数据块 所以导入速度快
+		
+		
+	
+2. redis - aof日志持久化
+
+		
+		redis2.4以后添加aof日志
+		
+		可以和rdb同时使用
+		
+		
+		aof工作原理:
+			
+			Server主进程 收到 客户端发送命令后 同时发送给 aof子进程
+			
+			aof子进程收到后 记录下来
+			
+			而aof子进程写记录通过配置来确定
+			
+		aof重写:
+			
+			在某一时刻点 把内存中的keyvalue逆化成相关的命令
+			
+			把命令写到aof日志
+		
+		aof配置:
+		
+		appendonly no                     # 是否打开 aof日志功能
+		
+		appendfsync always                # 每1个命令,都立即同步到aof. 安全,速度慢
+		
+		appendfsync everysec              # 折衷方案,每秒写1次
+		
+		appendfsync no                    # 写入工作交给操作系统,由操作系统判断缓冲区大小,统一写入到aof. 同步频率低,速度快,
+		
+		no-appendfsync-on-rewrite  yes:   # 正在导出rdb快照的过程中,要不要停止同步aof
+		
+		auto-aof-rewrite-percentage 100   # 重写条件:  aof文件大小比起上次重写时的大小,增长率100%时
+		
+		auto-aof-rewrite-min-size 64mb    # 重写条件:  aof文件,至少超过64M时,重写
+		
+		
+		注: 在dump rdb过程中,aof如果停止同步,会不会丢失?
+		答: 不会,所有的操作缓存在内存的队列里, dump完成后,统一操作.
+		
+		注: aof重写是指什么?
+		答: aof重写是指把内存中的数据,逆化成命令,写入到.aof日志里.
+		以解决 aof日志过大的问题.
+		
+		问: 如果rdb文件,和aof文件都存在,优先用谁来恢复数据?
+		答: aof
+		
+		问: 2种是否可以同时用?
+		答: 可以,而且推荐这么做
+		
+		问: 恢复时rdb和aof哪个恢复的快
+		答: rdb快,因为其是数据的内存映射,直接载入到内存,而aof是命令,需要逐条执行
+		
+		
+	
+	
+## redis集群
+
+- 集群作用:
+
+			
+		1:  主从备份 防止主机宕机
+			
+		2:  读写分离,分担master的任务
+			
+		3:  任务分离,如从服分别分担备份工作与计算工作
+		
+	
+
+![alt text](./imgs/master-slave.jpg "Title")
+
+
+- 主从通信原理
+	
+		
+		1. slave第一次 向 master 发送 同步请求
+		
+		2. master dump 出 rdb 给 slave
+		
+		3. 在dump rdb给slave时候 master的aof子进程同时在缓存运行的命令
+		
+		4. dump rdb给slave 结束后  在把 aof 同步给slave
+		
+		5. 完成上述以后 就通过 replicationFeedSlaves子进程进行同步了
+		
+		
+	
+	
+
+- 集群配置
+
+		
+		Master配置:
+		
+			1: 关闭rdb快照(备份工作交给slave)
+			
+			2: 可以开启aof
+		
+		slave配置:
+		
+			1: 声明slaveof
+			
+			2: 配置密码[如果master有密码]
+			
+			3: [某1个]slave打开 rdb快照功能
+			
+			4: 配置是否只读[slave-read-only]
+			
+		Master需要配置项目:
+		
+			#save            # 关闭rdb
+			
+			appendonly no    # aof 视情况关闭或开启
+			
+			requirepass      # 设置密码
+			
+			
+		slave需要配置项目:
+		
+			daemonize   yes                          // 以后台形式运行
+		
+			pidfile   path/redis6380.pid            // pid文件
+		
+			port   6380                            // 端口
+		
+			dbfilename   dump6380.rdb             //  从服务器承担rdb工作 就减轻主服务器压力
+			
+			slave-of 主服务器地址   主服务端口        // 开启slave 就是确认主服务器的地址 和 端口
+			
+			slave-read-only    yes                // 开启slave 只读功能
+			 
+			masterauth      requirepass-value     // 设置主服务器密码
+		
+		
+		
+		
+	
+	
+- redis主从复制的缺陷
+
+		
+		缺陷:
+		
+			每次salave断开后,(无论是主动断开,还是网络故障)
+			
+			再连接master
+		
+			都要master全部dump出来rdb,再aof,即同步的过程都要重新执行1遍
+		
+		
+		
+			所以要记住---多台slave不要一下都启动起来,否则master可能IO剧增
+			
+	
+	
+- redis运维常用命令
+
+		
+		time                         查看时间戳与微秒数
+		 
+		dbsize                       查看当前库中的key数量
+		
+		bgrewriteaof                 后台进程重写AOF
+		
+		bgsave                       后台保存rdb快照   // 另起一个进程 进行保存数据
+		
+		save                         保存rdb快照      // 使用当前主进程 进行保存数据  阻塞主进程工作
+		
+		lastsave                     上次保存时间
+		
+		slaveof                      设为slave服务器
+		
+		flushall                     清空所有db
+		
+		fluashdb                     清空当前db
+		
+		shutdown[""|save|nosave]     断开连接,关闭服务器  
+		
+		slowlog                      显示慢查询
+		
+		info                         显示服务器信息
+		
+		config get                   获取配置信息
+		
+		config set                   设置配置信息
+		
+		monitor                      打开控制台
+		
+		sync                         主从同步
+		
+		client list                  客户端列表
+		
+		client kill                  关闭某个客户端
+		
+		client setname               为客户端设置名字
+		
+		client getname               获取客户端名字
+		
+		
+		
+		
+		
+		redis 服务器端命令
+		redis 127.0.0.1:6380> time  ,显示服务器时间 , 时间戳(秒), 微秒数
+		1) "1375270361"
+		2) "504511"
+		
+		redis 127.0.0.1:6380> dbsize  // 当前数据库的key的数量
+		(integer) 2
+		redis 127.0.0.1:6380> select 2
+		OK
+		redis 127.0.0.1:6380[2]> dbsize
+		(integer) 0
+		redis 127.0.0.1:6380[2]> 
+		
+		
+		BGREWRITEAOF 后台进程重写AOF
+		BGSAVE       后台保存rdb快照
+		SAVE         保存rdb快照
+		LASTSAVE     上次保存时间
+		
+		Slaveof master-Host port  , 把当前实例设为master的slave
+		
+		Flushall  清空所有库所有键 
+		Flushdb  清空当前库所有键
+		Showdown [save/nosave]
+		
+		注: 如果不小心运行了flushall, 立即 shutdown nosave ,关闭服务器
+		然后 手工编辑aof文件, 去掉文件中的 “flushall ”相关行, 然后开启服务器,就可以导入回原来数据.
+		
+		如果,flushall之后,系统恰好bgrewriteaof了,那么aof就清空了,数据丢失.
+		
+		Slowlog 显示慢查询
+		注:多慢才叫慢? 
+		
+		Redis 的慢查询日志功能用于记录执行时间超过给定时长的命令请求， 用户可以通过这个功能产生的日志来监视和优化查询速度
+		
+		答: 由slowlog-log-slower-than 10000 ,来指定,(单位是微秒)
+		
+		服务器储存多少条慢查询的记录?
+		答: 由 slowlog-max-len 128 ,来做限制
+		
+		Info [Replication/CPU/Memory..] 
+		查看redis服务器的信息
+		
+		Config get 配置项  
+		Config set 配置项 值 (特殊的选项,不允许用此命令设置,如slave-of, 需要用单独的slaveof命令来设置)
+		
+		
+		Redis运维时需要注意的参数---运维时的观察参数
+		
+		1: 内存
+		# Memory
+		used_memory:859192 数据结构的空间
+		used_memory_rss:7634944 实占空间
+		mem_fragmentation_ratio:8.89 前2者的比例,1.N为佳,如果此值过大,说明redis的内存的碎片化严重,可以导出再导入一次.
+		
+		2: 主从复制
+		# Replication
+		role:slave
+		master_host:192.168.1.128
+		master_port:6379
+		master_link_status:up
+		
+		3:持久化
+		# Persistence
+		rdb_changes_since_last_save:0
+		rdb_last_save_time:1375224063
+		
+		4: fork耗时
+		#Status
+		latest_fork_usec:936  上次导出rdb快照,持久化花费微秒
+		注意: 如果某实例有10G内容,导出需要2分钟,
+		每分钟写入10000次,导致不断的rdb导出,磁盘始处于高IO状态.
+		
+		5: 慢日志
+		config get/set slowlog-log-slower-than
+		CONFIG get/SET slowlog-max-len 
+		slowlog get N 获取慢日志
+		
+		
+	
+	
+- redis 运维工作
+
+		
+		shutdown nosave                // 关闭的时候 不保存该命令
+		
+		在redis进程运行时候 rdb文件处于打开状态
+		
+		复制的rdb文件 占据同样的句柄
+		
+		所以要在复制之前 彻底关闭所有redis进程 pkill -g redis
+		
+		取消了redis对rdb文件的占用
+		
+		这样就可以了
+		
+			
+				
+	
+- sentine redis监控工具
+
+
+![alt text](./imgs/sentine.jpg "Title")  
+
+- redis 修改slave为master
+
+		
+		运行时更改master-slave
+			修改一台slave(设为A)为new master 
+			命令该服务不做其他redis服务的slave 
+			
+		   	命令:
+				 
+				 slaveof no one  # 不做任何的slave
+			
+				 slave-read-only  no  # yes代表只读 no为可写
+		
+		其他的slave再指向new master A
+		
+			命令该服务为new master A的slave
+			
+			命令格式 slaveof IP port
+		
+		
+		
+
+
+- sentine 配置
+	
+		
+		Sentinel不断与master通信,获取master的slave信息.
+		监听master与slave的状态
+		如果某slave失效,直接通知master去除该slave.
+		
+		如果master失效,是按照slave优先级(可配置), 选取1个slave做 new master
+		,把其他slave--> new master
+		
+		疑问: sentinel与master通信,如果某次因为master IO操作频繁,导致超时,
+		此时,认为master失效,很武断.
+		解决: sentnel允许多个实例看守1个master, 当N台(N可设置)sentinel都认为master失效,才正式失效.
+		
+		Sentinel选项配置
+		port 26379 # 端口
+		sentinel monitor mymaster 127.0.0.1 6379 2 ,
+		给主机起的名字(不重即可), 
+		当2个sentinel实例都认为master失效时,正式失效
+		
+		sentinel down-after-milliseconds mymaster 30000  多少毫秒后连接不到master认为断开
+		
+		sentinel can-failover mymaster yes #是否允许sentinel修改slave->master. 如为no,则只能监控,无权修改.
+		
+		sentinel parallel-syncs mymaster 1 , 一次性修改几个slave指向新的new master.
+		
+		sentinel client-reconfig-script mymaster /var/redis/reconfig.sh ,# 在重新配置new master,new slave过程,可以触发的脚本
+		
+		sentine监控配置:
+		
+			sentinel monitor def_master 127.0.0.1 6379 2  
+		
+			sentinel auth-pass def_master 012_345^678-90  
+		
+			##master被当前sentinel实例认定为“失效”的间隔时间  
+			
+			##如果当前sentinel与master直接的通讯中，在指定时间内没有响应或者响应错误代码，那么  
+			
+			##当前sentinel就认为master失效(SDOWN，“主观”失效)  
+			
+			##<mastername> <millseconds>  
+				
+			##默认为30秒  
+			
+			sentinel down-after-milliseconds def_master 30000  
+		
+			##当前sentinel实例是否允许实施“failover”(故障转移) 
+			 
+			##no表示当前sentinel为“观察者”(只参与"投票".不参与实施failover)
+			
+			##全局中至少有一个为yes 
+			 
+			sentinel can-failover def_master yes  
+		
+			##sentinel notification-script mymaster /var/redis/notify.sh  
+		
+		
+		
+	
+	
+#### key设计原则
+
+	1: 把表名转换为key前缀 如, tag:
+	
+	2: 第2段放置用于区分区key的字段--对应mysql中的主键的列名,如userid
+	
+	3: 第3段放置主键值,如2,3,4...., a , b ,c
+	
+	4: 第4段,写要存储的列名
+	
+	
+	用户表 user 转换为key-value存储
+	
+	下面是表结构:
+	
+		userid          username       passworde           email
+		
+		9               Lisi           1111111             lisi@163.com
+	
+	set  user:userid:9:username lisi
+	set  user:userid:9:password 111111
+	set  user:userid:9:email   lisi@163.com
+	
+	keys user:userid:9*
+	
+	
+	2 注意:
+	
+		在关系型数据中,除主键外,还有可能其他列也步骤查询,
+		
+		如上表中, username 也是极频繁查询的,往往这种列也是加了索引的.
+	
+		转换到k-v数据中,则也要相应的生成一条按照该列为主的key-value
+		
+		Set  user:username:lisi:uid  9  
+	
+		这样,我们可以根据username:lisi:uid ,查出userid=9, 
+		
+		再查user:9:password/email ...
+	
+		完成了根据用户名来查询用户信息
+		
+
+
+- php-redis扩展编译
+
+		
+		1: 到pecl.php.net  搜索redis
+		
+		2: 下载stable版(稳定版)扩展
+		
+		3: 解压
+		
+		4: 执行/php/path/bin/phpize (作用是检测PHP的内核版本,并为扩展生成相应的编译配置)
+		
+		5: configure --with-php-config=/php/path/bin/php-config
+		
+		6: make && make install
+		
+		
+		引入编译出的redis.so插件
+		
+			1: 编辑php.ini
+			
+			2: 添加 extension = /path/redis.so
+			
+			3: 重启php
+		
+		redis插件的使用
+		
+		// get instance
+		
+			$redis = new Redis();
+		
+		// connect to redis server
+		
+			$redis->open('localhost',6380);
+		
+			$redis->set('user:userid:9:username','wangwu');
+		
+			var_dump($redis->get('user:userid:9:username'));
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+	
